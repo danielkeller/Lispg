@@ -1,7 +1,6 @@
 module Evaluator (
     eval,
     doEval,
-    printValue
 ) where
 
 import Semantics

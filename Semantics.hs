@@ -1,29 +1,10 @@
 module Semantics (
     deSugar,
     dsExpr,
-    printExpr,
-    printFile,
 ) where
 
 import Syntax
 import General
-import Data.List(intercalate)
-
-printExpr (ELit l) = '\'' : printValue l
-printExpr (EVar s) = s
-printExpr (EAbs a e) = "λ" ++ a ++ "." ++ printExpr e
-printExpr (ELet b e) = "let " ++ intercalate "\n    " (printBindings b) ++ "\n    in " ++ printExpr e
-printExpr (ELetRec b e) = printExpr $ ELet b e
-printExpr (EApp l r@(EApp _ _)) = printExpr l ++ " (" ++ printExpr r ++ ")"
-printExpr (EApp l r@(EAbs _ _)) = printExpr l ++ " (" ++ printExpr r ++ ")"
-printExpr (EApp l r) = printExpr l ++ " " ++ printExpr r
-printExpr (ECase alts) = "case\n" ++ intercalate "\n" (map printCase alts)
-    where printCase (Alt c e) = "    | " ++ printExpr c ++ " -> " ++ printExpr e
-
-printBindings (Binding v e : bs) = (v ++ " = " ++ printExpr e) : printBindings bs
-printBindings [] = []
-
-printFile f = intercalate "\n\n" (printBindings f) ++ "\n\n"
 
 lispTrue = ELit (Atom "#t")
 lispFalse = ELit (Atom "#f")
