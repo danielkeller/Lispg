@@ -1,21 +1,22 @@
 module Syntax (
     parseFile,
     parseInput,
-    printValue
+    printValue,
 ) where
 
-import Text.ParserCombinators.Parsec
 import General
+import Text.ParserCombinators.Parsec
+import Control.Exception
 
 printValue l@(_:._) = "(" ++ plHelp l ++ ")"
 printValue (Closure _ _) = "#<closure>"
 printValue (Builtin _) = "#<closure>"
 printValue l = plHelp l
-plHelp Nil = ""
+plHelp Nil = "()"
 plHelp (Atom s) = s
 plHelp (Number n) = show n
 plHelp (l@(_:._) :. r) = "(" ++ plHelp l ++ ") " ++ plHelp r
-plHelp (Nil :. r) = "() " ++ plHelp r
+plHelp (l :. Nil) = plHelp l
 plHelp (l :. r) = plHelp l ++ " " ++ plHelp r
 
 symbol :: Parser Char
@@ -66,5 +67,5 @@ parseFile fName = do
 
 parseInput input =
     case parse parseExpr "input" input of
-        Left err -> error (show err)
+        Left err -> throwEx (show err)
         Right val -> val

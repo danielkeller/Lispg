@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 
 module General (
     Env(..),
@@ -6,10 +6,19 @@ module General (
     File,
     Binding(..),
     Expr(..),
-    Alt(..)
+    Alt(..),
+    InterpreterException(..),
+    throwEx
 ) where
 
 import Data.Map as Map
+import Control.Exception
+import Data.Typeable
+
+data InterpreterException = InterpreterException String
+    deriving (Show, Typeable)
+instance Exception InterpreterException
+throwEx = throw . InterpreterException
 
 type Env = Map String Value
 

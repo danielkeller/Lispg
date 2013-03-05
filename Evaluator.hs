@@ -50,7 +50,7 @@ doEval file expr = eval (ELetRec file expr) builtins
 eval :: Expr -> Env -> Value
 eval (ELit l) _ = l
 eval (EVar s) env = case Map.lookup s env of
-    Nothing -> error $ s ++ " is undefined"
+    Nothing -> throwEx $ s ++ " is undefined"
     Just v -> v
 eval l@(EAbs _ _) env = Closure l env
 
@@ -59,7 +59,7 @@ eval (EApp fun arg) env =
     where doFun (Closure (EAbs p b) cenv) arg = 
               eval b (Map.insert p arg cenv)
           doFun (Builtin f) arg = f arg
-          doFun bad _ = error $ "call on non-function " ++ printValue bad
+          doFun bad _ = throwEx $ "call on non-function " ++ printValue bad
 
 eval (ELet bs expr) env =
     eval expr $ Map.union env $ Map.fromList $ zip (map theVar bs) (map theVal bs)
