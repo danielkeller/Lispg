@@ -7,6 +7,7 @@ import Syntax
 import Semantics
 import Evaluator
 import General
+import Builtins
 
 import System.Environment
 import Control.Exception
@@ -27,3 +28,5 @@ evExpr code = do
               let replCode = dsExpr $ parseInput text
               putStrLn $ printExpr replCode
               putStrLn $ printValue $ doEval code $ replCode
+
+doEval file expr = eval (ELetRec file expr) builtins
