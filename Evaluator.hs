@@ -21,15 +21,12 @@ eval (EApp fun arg) env =
           doFun (Builtin f) arg = f arg
           doFun bad _ = throwEx $ "call on non-function " ++ printValue bad
 
-eval (ELet bs expr) env =
-    eval expr $ Map.union env $ Map.fromList $ zip (map theVar bs) (map theVal bs)
-    where theVar (Binding v _) = v
-          theVal (Binding _ e) = eval e env
+eval (ELet bs expr) env = eval expr $ Map.union env $ Map.fromList $ map bPair bs
+    where bPair (Binding v e) = (v, eval e env)
 
 eval (ELetRec bs expr) env = eval expr newEnv
-    where newEnv = Map.union env $ Map.fromList $ zip (map theVar bs) (map theVal bs)
-          theVar (Binding v _) = v
-          theVal (Binding _ e) = eval e newEnv
+    where newEnv = Map.union env $ Map.fromList $ map bPair bs
+          bPair (Binding v e) = (v, eval e newEnv)
           --these definitions are mutually recursive, which is a (sort of) cheating way
           --to get letrec to work
 
