@@ -34,7 +34,7 @@ builtins = Map.fromList [
     ,("zero?", derived "(lambda (n) (= n 0))")
     ,("null?", derived "(lambda (v) (eq? v '()))")
     ,("list?", derived "(lambda (v) (or (pair? v) (eq? v '())))")
-    ,("or", derived "(lambda (l r) (if (not l) r l))")
+    ,("or", derived "(lambda (l r) (if l l r))")
     ,("and", derived "(lambda (l r) (if l r l))")
     ]
     where toBin f = Builtin $ \ a -> Builtin $ \ b -> f a b
