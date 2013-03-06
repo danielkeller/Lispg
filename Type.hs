@@ -54,7 +54,7 @@ instance Types Type where
     apply _ t = t
 
 instance Types [Type] where
-    ftv l = foldr1 Set.union (map ftv l)
+    ftv l = foldr Set.union Set.empty (map ftv l)
     apply s = map (apply s)
 
 newtype TypeEnv = TypeEnv (Map.Map String Type)
@@ -150,7 +150,9 @@ ti env exp@(EApp f a) = do
     (s1, t1) <- ti env f
     (s2, t2) <- ti (apply s1 env) a
     (s3, t3) <- mgu (apply s1 t1) (TFun t2 tv)
-    return (s3 `composeSubst` s2 `composeSubst` s1, t3)
+    return (s3 `composeSubst` s2 `composeSubst` s1, case t3 of
+            TFun _ a' -> a'
+            Top -> Top)
 
 ti env (ELet bs e2) = do
     let TypeEnv env' = foldl remove env $ map var bs --hiding
