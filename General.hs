@@ -56,6 +56,7 @@ printValue l = plHelp l
 plHelp Nil = "()"
 plHelp (Atom s) = s
 plHelp (Number n) = show n
+plHelp (l@(_:._) :. Nil) = "(" ++ plHelp l ++ ")"
 plHelp (l@(_:._) :. r) = "(" ++ plHelp l ++ ") " ++ plHelp r
 plHelp (l :. Nil) = plHelp l
 plHelp (l :. r) = plHelp l ++ " " ++ plHelp r
