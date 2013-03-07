@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleInstances, DoRec #-}
 
 module Type (
     infer,
@@ -18,7 +18,7 @@ data Type = TVar String
           | TList Type
           | Top
           | Scheme [String] Type --universal quantification
-          deriving (Eq)
+          deriving (Eq, Show)
 
 printType (TVar s) = s
 printType (Ty s) = s
@@ -26,7 +26,7 @@ printType (TFun a@(TFun _ _) r) = "(" ++ printType a ++ ") -> " ++ printType r
 printType (TFun a r) = printType a ++ " -> " ++ printType r
 printType (TList t) = "[" ++ printType t ++ "]"
 printType Top = "⊤"
-printType (Scheme free t) = "∀" ++ intercalate "," free ++ printType t
+printType (Scheme free t) = "∀ " ++ intercalate "," free ++ " . " ++ printType t
 
 type Subst = Map.Map String Type
 nullSubst :: Subst
@@ -57,14 +57,14 @@ instance Types [Type] where
     ftv l = foldr Set.union Set.empty (map ftv l)
     apply s = map (apply s)
 
-newtype TypeEnv = TypeEnv (Map.Map String Type)
+type TypeEnv = Map.Map String Type
 
 remove :: TypeEnv -> String -> TypeEnv
-remove (TypeEnv env) v = TypeEnv (Map.delete v env)
+remove env v = Map.delete v env
 
 instance Types TypeEnv where
-    ftv (TypeEnv env) = ftv (Map.elems env)
-    apply s (TypeEnv env) = TypeEnv (Map.map (apply s) env)
+    ftv env = ftv (Map.elems env)
+    apply s env = Map.map (apply s) env
 
 generalize :: TypeEnv -> Type -> Type
 generalize env t = Scheme vars t
@@ -86,6 +86,8 @@ instantiate (Scheme v t) = do
     nvars <- mapM (\_ -> newTyVar "a") v
     let s = Map.fromList (zip v nvars)
     return $ apply s t
+instantiate other = return other
+--instantiate bad = error $ "can't instantiate " ++ printType bad
 
 mgu :: Type -> Type -> TI (Subst, Type)
 mgu (TFun a r) (TFun a' r') = do
@@ -131,7 +133,7 @@ ti _ (ELit l) = do
     litTy <- tiLit l
     return (nullSubst, litTy)
 
-ti (TypeEnv env) (EVar n) =
+ti env (EVar n) =
     case Map.lookup n env of
         Nothing -> throwEx $ "unbound variable " ++ n
         Just sigma -> do
@@ -140,8 +142,8 @@ ti (TypeEnv env) (EVar n) =
 
 ti env (EAbs n e) = do
     tv <- newTyVar "p"
-    let TypeEnv env' = remove env n --hiding
-        env'' = TypeEnv (env' `Map.union` (Map.singleton n (Scheme [] tv)))
+    let env' = remove env n --hiding
+        env'' = env' `Map.union` (Map.singleton n (Scheme [] tv))
     (s1, t1) <- ti env'' e
     return (s1, TFun (apply s1 tv) t1)
 
@@ -155,22 +157,34 @@ ti env exp@(EApp f a) = do
             Top -> Top)
 
 ti env (ELet bs e2) = do
-    let TypeEnv env' = foldl remove env $ map var bs --hiding
-    st1s <- mapM doBind bs
-    let env'' = TypeEnv $ Map.union env' $ Map.fromList $ zip (map var bs) (map snd st1s)
+    let env' = foldl remove env $ map var bs --hiding
+    st1s <- mapM (doBind env') bs
+    let env'' = Map.union env' $ Map.fromList $ zip (map var bs) (map snd st1s)
         alls = foldl1 composeSubst $ map fst st1s
     (s2, t2) <- ti (apply alls env'') e2
-    return (alls, t2)
-    where doBind (Binding x e1) = do
+    return (alls `composeSubst` s2, t2)
+    where doBind env (Binding x e1) = do
               (s1, t1) <- ti env e1
               return (s1, generalize (apply s1 env) t1) --let-polym
           var (Binding x _) = x
 
-ti _ (ELetRec _ _) = error "TODO"
+ti env (ELetRec bs e2) = do
+    let env' = foldl remove env $ map var bs --hiding
+    rec st1s <- mapM (doBind $ env'' `Map.union` env') bs
+        let env'' = Map.fromList $ zip (map var bs) (map snd st1s)
+    let alls = foldl1 composeSubst $ map fst st1s
+        env''' = apply alls $ env'' `Map.union` env'
+    (s2, t2) <- ti env''' e2
+    return (alls `composeSubst` s2, t2)
+    where doBind env (Binding x e1) = do
+              (s1, t1) <- ti env e1
+              return (s1, t1)
+          var (Binding x _) = x
+
 ti _ (ECase _) = error "TODO"
 
 --infer :: Map.Map String Type -> Expr -> Type
 infer :: Expr -> Type
 infer e = evalTI $ do
-    (s, t) <- ti (TypeEnv Map.empty) e
+    (s, t) <- ti Map.empty e
     return (apply s t)
