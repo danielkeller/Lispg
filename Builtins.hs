@@ -1,11 +1,13 @@
 module Builtins (
-    builtins
+    builtins,
+    builtinTy
 ) where
 
 import Semantics
 import Syntax
 import General
 import Evaluator
+import Type
 import qualified Data.Map as Map
 
 valTrue = Atom "#t"
@@ -49,3 +51,8 @@ builtins = Map.fromList [
           isPair (_ :. _) = valTrue
           isPair _ = valFalse
           isEq l r = toBool (l == r)
+
+builtinTy = Map.fromList [
+    ("cons", TFun (TVar "a") (TFun (TList (TVar "a")) (TList (TVar "a")))),
+    ("car", TFun (TList (TVar "a")) (TVar "a"))
+    ]

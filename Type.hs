@@ -89,25 +89,25 @@ instantiate (Scheme v t) = do
 instantiate other = return other
 --instantiate bad = error $ "can't instantiate " ++ printType bad
 
-mgu :: Type -> Type -> TI (Subst, Type)
-mgu (TFun a r) (TFun a' r') = do
-    (s1, a'') <- mgu a a'
-    (s2, r'') <- mgu (apply s1 r) (apply s1 r')
-    return ((s1 `composeSubst` s2), TFun a'' r'')
-mgu (TList t) (TList t') = do
-    (s, t'') <- mgu t t'
-    return (s, TList t'')
+mgu :: Type -> Type -> (Subst, Type)
+mgu (TFun a r) (TFun a' r') = let
+    (s1, a'') = mgu a a'
+    (s2, r'') = mgu (apply s1 r) (apply s1 r')
+    in ((s1 `composeSubst` s2), TFun a'' r'')
+mgu (TList t) (TList t') = let
+    (s, t'') = mgu t t'
+    in (s, TList t'')
 mgu (TVar u) t = varBind u t
 mgu t (TVar u) = varBind u t
-mgu t u = return $ if t == u
+mgu t u = if t == u
     then (nullSubst, t)
     else (nullSubst, Top) 
 
-varBind :: String -> Type -> TI (Subst, Type)
+varBind :: String -> Type -> (Subst, Type)
 varBind u t
-    | t == TVar u = return (nullSubst, t)
-    | u `Set.member` ftv t = return (Map.singleton u Top, Top)
-    | otherwise = return (Map.singleton u t, t)
+    | t == TVar u = (nullSubst, t)
+    | u `Set.member` ftv t = (Map.singleton u Top, Top)
+    | otherwise = (Map.singleton u t, t)
 
 tiLit :: Value -> TI Type
 tiLit (Atom _) = return $ Ty "Atom"
@@ -133,7 +133,7 @@ ti _ (ELit l) = do
     litTy <- tiLit l
     return (nullSubst, litTy)
 
-ti env (EVar n) =
+ti env (EVar n) = --do special types here
     case Map.lookup n env of
         Nothing -> throwEx $ "unbound variable " ++ n
         Just sigma -> do
@@ -151,7 +151,7 @@ ti env exp@(EApp f a) = do
     tv <- newTyVar "a"
     (s1, t1) <- ti env f
     (s2, t2) <- ti (apply s1 env) a
-    (s3, t3) <- mgu (apply s1 t1) (TFun t2 tv)
+    let (s3, t3) = mgu (apply s1 t1) (TFun t2 tv)
     return (s3 `composeSubst` s2 `composeSubst` s1, case t3 of
             TFun _ a' -> a'
             Top -> Top)
@@ -162,29 +162,41 @@ ti env (ELet bs e2) = do
     let env'' = Map.union env' $ Map.fromList $ zip (map var bs) (map snd st1s)
         alls = foldl1 composeSubst $ map fst st1s
     (s2, t2) <- ti (apply alls env'') e2
-    return (alls `composeSubst` s2, t2)
+    return (s2 `composeSubst` alls, t2)
     where doBind env (Binding x e1) = do
               (s1, t1) <- ti env e1
               return (s1, generalize (apply s1 env) t1) --let-polym
           var (Binding x _) = x
 
 ti env (ELetRec bs e2) = do
-    let env' = foldl remove env $ map var bs --hiding
-    rec st1s <- mapM (doBind $ env'' `Map.union` env') bs
-        let env'' = Map.fromList $ zip (map var bs) (map snd st1s)
-    let alls = foldl1 composeSubst $ map fst st1s
-        env''' = apply alls $ env'' `Map.union` env'
-    (s2, t2) <- ti env''' e2
-    return (alls `composeSubst` s2, t2)
+    nvars <- mapM (\_ -> newTyVar "lr") bs --needed to terminate in some cases
+    let env' = Map.fromList (zip (map var bs) nvars) `Map.union` env
+    subs <- mapM (doBind env') bs
+    let alls = foldl unifySubst nullSubst subs
+    (s2, t2) <- ti (apply alls env') e2
+    return (s2 `composeSubst` alls, t2)
     where doBind env (Binding x e1) = do
               (s1, t1) <- ti env e1
-              return (s1, t1)
+              let TVar myV = env Map.! x
+              let s2 = s1 `composeSubst` Map.singleton myV t1
+              return s2
+          unifySubst s1 s2 
+              | int == Map.empty = s1 `composeSubst` s2
+              | otherwise = Map.foldl unifySubst nullSubst int `composeSubst` s1 `composeSubst` s2
+              where int = Map.intersectionWith mgus s1 s2
+          mgus s1 s2 = fst (mgu s1 s2)
           var (Binding x _) = x
 
-ti _ (ECase _) = error "TODO"
+ti env (ECase alts) = do
+    tv <- newTyVar "c"
+    doAlts alts nullSubst tv
+    where doAlts ((Alt _ e):alts) s t = do
+              (s1, t1) <- ti (apply s env) e
+              let (s2, t2) = mgu (apply s1 t) t1
+              doAlts alts (s2 `composeSubst` s1) t2
+          doAlts [] s t = return (s, t)
 
---infer :: Map.Map String Type -> Expr -> Type
-infer :: Expr -> Type
-infer e = evalTI $ do
-    (s, t) <- ti Map.empty e
+infer :: TypeEnv -> Expr -> Type
+infer env e = evalTI $ do
+    (s, t) <- ti env e
     return (apply s t)
