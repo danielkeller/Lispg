@@ -12,6 +12,9 @@ import qualified Data.Set as Set
 import Control.Monad.State
 import General
 
+import Debug.Trace
+traceV str v = trace (str ++ " " ++ show v) v
+
 data Type = TVar String
           | Ty String --concrete type
           | TFun Type Type
@@ -33,6 +36,14 @@ nullSubst :: Subst
 nullSubst = Map.empty
 composeSubst :: Subst -> Subst -> Subst
 composeSubst s1 s2 = (Map.map (apply s1) s2) `Map.union` s1
+composeSubsts :: [Subst] -> Subst
+composeSubsts = foldl composeSubst nullSubst
+--this is a generalization of composeSubst for when substitutions have terms in common
+unifySubst :: Subst -> Subst -> Subst
+unifySubst s1 s2 = {-doTrace $-} Map.foldl unifySubst nullSubst int `composeSubst` s1 `composeSubst` s2
+    where int = Map.intersectionWith mgus s1 s2
+          doTrace v = trace (show s1 ++ " ~ " ++ show s2 ++ " ->\n    " ++ show v) v
+          mgus s1 s2 = fst (mgu s1 s2)
 
 class Types a where
     ftv :: a -> Set.Set String
@@ -101,13 +112,17 @@ mgu (TVar u) t = varBind u t
 mgu t (TVar u) = varBind u t
 mgu t u = if t == u
     then (nullSubst, t)
-    else (nullSubst, Top) 
+    else (topSubst t u, Top) 
 
 varBind :: String -> Type -> (Subst, Type)
 varBind u t
     | t == TVar u = (nullSubst, t)
     | u `Set.member` ftv t = (Map.singleton u Top, Top)
     | otherwise = (Map.singleton u t, t)
+
+topSubst :: Type -> Type -> Subst
+topSubst t u = Map.fromList $ zip frees (repeat Top)
+    where frees = Set.toList $ ftv t `Set.union` ftv u
 
 tiLit :: Value -> TI Type
 tiLit (Atom _) = return $ Ty "Atom"
@@ -124,7 +139,7 @@ tiLit (v :. rest) = do
     return $ theTy restTy lTy
     where theTy (TList t) lTy
               | t == lTy = TList t
-              | otherwise = Top
+              | otherwise = TList Top
           theTy _ _ = Top
 tiLit _ = error "unexpected run-time value in literal"
 
@@ -142,16 +157,15 @@ ti env (EVar n) = --do special types here
 
 ti env (EAbs n e) = do
     tv <- newTyVar "p"
-    let env' = remove env n --hiding
-        env'' = env' `Map.union` (Map.singleton n (Scheme [] tv))
-    (s1, t1) <- ti env'' e
+    let env' = Map.insert n (Scheme [] tv) env --hiding
+    (s1, t1) <- ti env' e
     return (s1, TFun (apply s1 tv) t1)
 
 ti env exp@(EApp f a) = do
     tv <- newTyVar "a"
     (s1, t1) <- ti env f
     (s2, t2) <- ti (apply s1 env) a
-    let (s3, t3) = mgu (apply s1 t1) (TFun t2 tv)
+    let (s3, t3) = mgu (apply s2 t1) (TFun t2 tv)
     return (s3 `composeSubst` s2 `composeSubst` s1, case t3 of
             TFun _ a' -> a'
             Top -> Top)
@@ -160,7 +174,7 @@ ti env (ELet bs e2) = do
     let env' = foldl remove env $ map var bs --hiding
     st1s <- mapM (doBind env') bs
     let env'' = Map.union env' $ Map.fromList $ zip (map var bs) (map snd st1s)
-        alls = foldl1 composeSubst $ map fst st1s
+        alls = composeSubsts $ map fst st1s
     (s2, t2) <- ti (apply alls env'') e2
     return (s2 `composeSubst` alls, t2)
     where doBind env (Binding x e1) = do
@@ -169,22 +183,21 @@ ti env (ELet bs e2) = do
           var (Binding x _) = x
 
 ti env (ELetRec bs e2) = do
-    nvars <- mapM (\_ -> newTyVar "lr") bs --needed to terminate in some cases
-    let env' = Map.fromList (zip (map var bs) nvars) `Map.union` env
-    subs <- mapM (doBind env') bs
-    let alls = foldl unifySubst nullSubst subs
-    (s2, t2) <- ti (apply alls env') e2
-    return (s2 `composeSubst` alls, t2)
+    nvars <- mapM (\_ -> newTyVar "lr") bs
+    let vars = map (\(TVar n) -> n) nvars
+        env' = Map.fromList (zip (map var bs) nvars) `Map.union` env
+    terms <- mapM (doBind env') bs
+    let selfs = Map.fromList $ zip vars $ map snd terms
+        alls = map (unifySubst selfs) $ map fst terms
+        selfs' = Map.map (generalize env) $ composeSubsts $ zipWith mapOne vars alls
+        others = Map.filterWithKey (\k _ -> not (k `elem` vars)) $ composeSubsts alls
+        s1 = others `composeSubst` selfs'
+    (s2, t2) <- ti (apply s1 env') e2
+    return (s2 `composeSubst` s1, t2)
     where doBind env (Binding x e1) = do
-              (s1, t1) <- ti env e1
-              let TVar myV = env Map.! x
-              let s2 = s1 `composeSubst` Map.singleton myV t1
-              return s2
-          unifySubst s1 s2 
-              | int == Map.empty = s1 `composeSubst` s2
-              | otherwise = Map.foldl unifySubst nullSubst int `composeSubst` s1 `composeSubst` s2
-              where int = Map.intersectionWith mgus s1 s2
-          mgus s1 s2 = fst (mgu s1 s2)
+              (s, t) <- ti env e1
+              return (s, t)
+          mapOne k m = Map.singleton k (m Map.! k)
           var (Binding x _) = x
 
 ti env (ECase alts) = do
@@ -193,7 +206,7 @@ ti env (ECase alts) = do
     where doAlts ((Alt _ e):alts) s t = do
               (s1, t1) <- ti (apply s env) e
               let (s2, t2) = mgu (apply s1 t) t1
-              doAlts alts (s2 `composeSubst` s1) t2
+              doAlts alts (s2 `composeSubst` s1 `composeSubst` s) t2
           doAlts [] s t = return (s, t)
 
 infer :: TypeEnv -> Expr -> Type

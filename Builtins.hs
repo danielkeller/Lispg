@@ -53,6 +53,7 @@ builtins = Map.fromList [
           isEq l r = toBool (l == r)
 
 builtinTy = Map.fromList [
-    ("cons", TFun (TVar "a") (TFun (TList (TVar "a")) (TList (TVar "a")))),
-    ("car", TFun (TList (TVar "a")) (TVar "a"))
+     ("cons", Scheme ["a"] $ TFun (TVar "a") (TFun (TList (TVar "a")) (TList (TVar "a"))))
+    ,("car", Scheme ["a"] $ TFun (TList (TVar "a")) (TVar "a"))
+    ,("cdr", Scheme ["a"] $ TFun (TList (TVar "a")) (TList (TVar "a")))
     ]
