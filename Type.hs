@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances, DoRec #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 module Type (
     infer,
@@ -104,7 +104,7 @@ mgu :: Type -> Type -> (Subst, Type)
 mgu (TFun a r) (TFun a' r') = let
     (s1, a'') = mgu a a'
     (s2, r'') = mgu (apply s1 r) (apply s1 r')
-    in ((s1 `composeSubst` s2), TFun a'' r'')
+    in ((s2 `composeSubst` s1), TFun a'' r'')
 mgu (TList t) (TList t') = let
     (s, t'') = mgu t t'
     in (s, TList t'')
@@ -202,12 +202,17 @@ ti env (ELetRec bs e2) = do
 
 ti env (ECase alts) = do
     tv <- newTyVar "c"
-    doAlts alts nullSubst tv
+    condSubst <- doConds alts nullSubst
+    doAlts alts condSubst tv
     where doAlts ((Alt _ e):alts) s t = do
               (s1, t1) <- ti (apply s env) e
               let (s2, t2) = mgu (apply s1 t) t1
               doAlts alts (s2 `composeSubst` s1 `composeSubst` s) t2
           doAlts [] s t = return (s, t)
+          doConds ((Alt c _):alts) s = do
+              (s1, _) <- ti (apply s env) c
+              doConds alts (s1 `composeSubst` s)
+          doConds [] s = return s
 
 infer :: TypeEnv -> Expr -> Type
 infer env e = evalTI $ do
