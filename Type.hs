@@ -13,7 +13,6 @@ import Control.Monad.State
 import General
 
 import Debug.Trace
-traceV str v = trace (str ++ " " ++ show v) v
 
 data Type = TVar String
           | Ty String --concrete type

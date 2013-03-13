@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE DeriveDataTypeable, FlexibleInstances #-}
 
 module General (
     Env(..),
@@ -12,12 +12,16 @@ module General (
     printValue,
     printExpr,
     printFile,
+    traceV,
 ) where
 
 import qualified Data.Map as Map
 import Control.Exception
 import Data.Typeable
 import Data.List(intercalate)
+
+import Debug.Trace
+traceV str v = trace (str ++ " " ++ show v) v
 
 data InterpreterException = InterpreterException String
     deriving (Show, Typeable)
@@ -28,11 +32,15 @@ type Env = Map.Map String Value
 
 data Value = Atom String | Number Integer | Value :. Value | Nil --compile-time
              | Closure Expr Env | Builtin (Value -> Value) --run-time
+    deriving Show
+
+instance Show (Value -> Value) where
 
 infixr 5 :.
 
 type File = [Binding]
 data Binding = Binding String Expr
+    deriving Show
 data Expr = ELit Value
           | EVar String
           | EAbs String Expr
@@ -40,7 +48,9 @@ data Expr = ELit Value
           | ELet [Binding] Expr
           | ELetRec [Binding] Expr
           | ECase [Alt]
+    deriving Show
 data Alt = Alt Expr Expr
+    deriving Show
 
 --this operation is only defined on atoms and numbers
 instance Eq Value where
