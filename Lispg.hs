@@ -10,9 +10,11 @@ import General
 import Builtins
 import Type
 import Cps
+import CodeGen
 
 import System.Environment
 import Control.Exception
+import Data.List(intercalate)
 
 main = do
     args <- getArgs
@@ -21,7 +23,8 @@ main = do
             otherwise -> error "not enough argumnets"
     code <- parseFile fName >>= return.deSugar
     putStrLn $ printFile code
-    putStrLn $ printCpsFile $ fileToCps code
+    putStrLn $ intercalate "\n\n" $ map show $ fileToCps code
+    codeGen "test.bc" $ fileToCps code
     evExpr code
 
 evExpr code = do

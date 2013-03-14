@@ -21,9 +21,11 @@ module General (
     traceV,
     printCps,
     printCpsFile,
+    Code(..),
 ) where
 
 import qualified Data.Map as Map
+import qualified Data.Set as Set
 import Control.Exception
 import Data.Typeable
 import Data.List(intercalate)
@@ -80,6 +82,36 @@ instance Eq Value where
     (Number l) == (Number r) = l == r
     Nil == Nil = True
     _ == _ = False
+
+class Code a where
+    freeIn :: a -> Set.Set String --free variables
+
+instance Code Expr where
+    freeIn (ELit _) = Set.empty
+    freeIn (EVar x) = Set.singleton x
+    freeIn (EAbs p e) = Set.delete p $ freeIn e
+    freeIn (EApp l r) = freeIn l `Set.union` freeIn r
+    freeIn (ELet bs ex) = foldl dropB (freeIn ex) bs `Set.union` Set.unions (map bFree bs)
+        where bFree (Binding _ e) = freeIn e
+              dropB frees (Binding v _) = Set.delete v frees
+    freeIn (ELetRec bs ex) = foldl dropB (freeIn ex `Set.union` Set.unions (map bFree bs)) bs
+        where bFree (Binding _ e) = freeIn e
+              dropB frees (Binding v _) = Set.delete v frees
+    freeIn (ECase alts) = Set.unions $ map aFree alts
+        where aFree (Alt c e) = freeIn c `Set.union` freeIn e
+
+instance Code Cps where
+    freeIn (Call l r c) = freeIn l `Set.union` freeIn r `Set.union` freeIn c
+    freeIn (CCC v) = freeIn v
+    freeIn (Case alts) = Set.unions $ map aFree alts
+        where aFree (CAlt c e) = freeIn c `Set.union` freeIn e
+
+instance Code Inline where
+    freeIn (Inline e) = freeIn e
+    freeIn (Fun p e) = Set.delete p $ freeIn e
+
+instance Code Cont where
+    freeIn (Cont p e) = Set.delete p $ freeIn e
 
 printValue :: Value -> String
 printValue l@(_:._) = "(" ++ plHelp l ++ ")"
