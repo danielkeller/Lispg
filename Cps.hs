@@ -1,47 +1,12 @@
 module Cps (
     toCps,
     fileToCps,
-    printCps,
-    printCpsFile,
-    CFile,
-    CBinding(..),
-    Cps(..),
-    CAlt(..),
-    Inline(..),
-    Cont(..)
 ) where
 
 import General
 import Builtins
 import Control.Monad.State
 import qualified Data.Map as Map
-
-type CFile = [CBinding]
-data CBinding = CBinding String Inline
-    deriving Show
-
-data Cps = Call Inline Inline Cont | CCC Inline | Case [CAlt]
-    deriving Show
-data CAlt = CAlt Inline Cps
-    deriving Show
-data Inline = Inline Expr | Fun String Cps
-    deriving Show
-data Cont = Cont String Cps -- | CC
-    deriving Show
-
-toExpr :: Cps -> Expr
-toExpr (Call f p (Cont s c)) = EApp (EApp (fromInline f) (fromInline p)) $ EAbs s (toExpr c)
-toExpr (CCC e) = EApp (EVar "k") $ fromInline e
-toExpr (Case a) = ECase (map teAlt a)
-    where teAlt (CAlt (Inline c) e) = Alt c (toExpr e)
-
-fromInline :: Inline -> Expr
-fromInline (Inline e) = e
-fromInline (Fun p b) = EAbs p (EAbs "k" (toExpr b))
-
-printCps = printExpr . toExpr
-printCpsFile = concat . map printB
-    where printB (CBinding s e) = s ++ " = " ++ printExpr (fromInline e) ++ "\n"
 
 toCps :: Expr -> Cps
 toCps e = evalV $ do

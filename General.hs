@@ -7,12 +7,20 @@ module General (
     Binding(..),
     Expr(..),
     Alt(..),
+    CFile,
+    CBinding(..),
+    Cps(..),
+    CAlt(..),
+    Inline(..),
+    Cont(..),
     InterpreterException(..),
     throwEx,
     printValue,
     printExpr,
     printFile,
     traceV,
+    printCps,
+    printCpsFile,
 ) where
 
 import qualified Data.Map as Map
@@ -35,6 +43,7 @@ data Value = Atom String | Number Integer | Value :. Value | Nil --compile-time
     deriving Show
 
 instance Show (Value -> Value) where
+    --this will probably crash if you try to use it
 
 infixr 5 :.
 
@@ -52,6 +61,19 @@ data Expr = ELit Value
 data Alt = Alt Expr Expr
     deriving Show
 
+type CFile = [CBinding]
+data CBinding = CBinding String Inline
+    deriving Show
+
+data Cps = Call Inline Inline Cont | CCC Inline | Case [CAlt]
+    deriving Show
+data CAlt = CAlt Inline Cps
+    deriving Show
+data Inline = Inline Expr | Fun String Cps
+    deriving Show
+data Cont = Cont String Cps -- | CC
+    deriving Show
+
 --this operation is only defined on atoms and numbers
 instance Eq Value where
     (Atom l) == (Atom r) = l == r
@@ -59,6 +81,7 @@ instance Eq Value where
     Nil == Nil = True
     _ == _ = False
 
+printValue :: Value -> String
 printValue l@(_:._) = "(" ++ plHelp l ++ ")"
 printValue (Closure _ _) = "#<closure>"
 printValue (Builtin _) = "#<closure>"
@@ -73,6 +96,7 @@ plHelp (l :. Nil) = plHelp l
 plHelp (l :. r@(_ :. _)) = plHelp l ++ " " ++ plHelp r
 plHelp (l :. r) = plHelp l ++ " . " ++ plHelp r
 
+printExpr :: Expr -> String
 printExpr (ELit l) = '\'' : printValue l
 printExpr (EVar s) = s
 printExpr (EAbs a e) = "λ" ++ a ++ "." ++ printExpr e
@@ -88,3 +112,17 @@ printBindings (Binding v e : bs) = (v ++ " = " ++ printExpr e) : printBindings b
 printBindings [] = []
 
 printFile f = intercalate "\n\n" (printBindings f) ++ "\n\n"
+
+toExpr :: Cps -> Expr
+toExpr (Call f p (Cont s c)) = EApp (EApp (fromInline f) (fromInline p)) $ EAbs s (toExpr c)
+toExpr (CCC e) = EApp (EVar "k") $ fromInline e
+toExpr (Case a) = ECase (map teAlt a)
+    where teAlt (CAlt (Inline c) e) = Alt c (toExpr e)
+
+fromInline :: Inline -> Expr
+fromInline (Inline e) = e
+fromInline (Fun p b) = EAbs p (EAbs "k" (toExpr b))
+
+printCps = printExpr . toExpr
+printCpsFile = concat . map printB
+    where printB (CBinding s e) = s ++ " = " ++ printExpr (fromInline e) ++ "\n"
