@@ -23,7 +23,8 @@ main = do
             otherwise -> error "not enough argumnets"
     code <- parseFile fName >>= return.deSugar
     putStrLn $ printFile code
-    putStrLn $ intercalate "\n\n" $ map show $ fileToCps code
+    --putStrLn $ intercalate "\n\n" $ map show $ fileToCps code
+    putStrLn $ printCpsFile $ fileToCps code
     codeGen "test.bc" $ fileToCps code
     evExpr code
 
