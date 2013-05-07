@@ -10,11 +10,13 @@ import General
 import Builtins
 import Type
 import Cps
-import CodeGen
+--import CodeGen
 
 import System.Environment
 import Control.Exception
 import Data.List(intercalate)
+
+import qualified Data.Map as Map
 
 main = do
     args <- getArgs
@@ -22,11 +24,13 @@ main = do
             n:_ -> n
             otherwise -> error "not enough argumnets"
     code <- parseFile fName >>= return.deSugar
-    putStrLn $ printFile code
+    --putStrLn $ printFile code
+    flip mapM_ code (\ (Binding v e) ->
+        inferT builtinTy e)
     --putStrLn $ intercalate "\n\n" $ map show $ fileToCps code
-    putStrLn $ printCpsFile $ fileToCps code
-    codeGen "test.bc" $ fileToCps code
-    evExpr code
+    --putStrLn $ printCpsFile $ fileToCps code
+    --codeGen "test.bc" $ fileToCps code
+    --evExpr code
 
 evExpr code = do
     catch doRep $ \e -> do
@@ -38,7 +42,7 @@ evExpr code = do
               let replCode = dsExpr $ parseInput text
               putStrLn $ printExpr replCode
               putStrLn $ printCps $ toCps replCode 
-              putStrLn $ printType $ doInfer code replCode
+              print $ doInfer code replCode
               putStrLn $ printValue $ doEval code replCode
 
 doEval file expr = eval (ELetRec file expr) builtins

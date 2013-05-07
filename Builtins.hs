@@ -1,3 +1,5 @@
+{-# LANGUAGE FlexibleInstances #-}
+
 module Builtins (
     builtins,
     builtinTy
@@ -52,11 +54,28 @@ builtins = Map.fromList [
           isPair _ = valFalse
           isEq l r = toBool (l == r)
 
+class TyPart a where
+    toTy :: a -> Type
+instance TyPart [Char] where
+    toTy s = TV (TVar s)
+instance TyPart Constr where
+    toTy c = Type c []
+instance TyPart Type where
+    toTy = id
+
+(==>) :: (TyPart a, TyPart b) => a -> b -> Type
+(==>) l r = Type Func [toTy l, toTy r]
+infixr 5 ==>
+list_of :: TyPart a => a -> Type
+list_of t = Type List [toTy t]
+for_all :: [String] -> Type -> Scheme
+for_all ss t = Scheme (map TVar ss) t
+
 builtinTy = Map.fromList [
-     ("cons", Scheme ["a"] $ TFun (TVar "a") (TFun (TList (TVar "a")) (TList (TVar "a"))))
-    ,("car", Scheme ["a"] $ TFun (TList (TVar "a")) (TVar "a"))
-    ,("cdr", Scheme ["a"] $ TFun (TList (TVar "a")) (TList (TVar "a")))
-    ,("eq?", Scheme ["a"] $ TFun (TVar "a") (TFun (TVar "a") (Ty "Atom")))
+     ("cons", for_all ["a"] $ "a" ==> list_of "a" ==> list_of "a")
+    ,("car", for_all ["a"] $ list_of "a" ==> "a")
+    ,("cdr", for_all ["a"] $ list_of "a" ==> list_of "a")
+    ,("eq?", for_all ["a"] $ "a" ==> "a" ==> AtomTy)
     ,("atom?", tyTest)
     ,("number?", tyTest)
     ,("pair?", tyTest)
@@ -70,14 +89,13 @@ builtinTy = Map.fromList [
     ,("<=", test)
     ,(">=", test)
     ,("=", test)
-    ,("=", test) --because this works on numbers too
-    ,("not", Scheme["a"] $ TFun (TVar "a") (Ty "Atom"))
-    ,("zero?", Scheme[] $ TFun (Ty "Number") (Ty "Atom"))
+    ,("not", tyTest)
+    ,("zero?", for_all [] $ NumberTy ==> AtomTy)
     ,("null?", tyTest)
     ,("list?", tyTest)
-    ,("or", Scheme [] $ TFun (Ty "Atom") (TFun (Ty "Atom") (Ty "Atom")))
-    ,("and", Scheme [] $ TFun (Ty "Atom") (TFun (Ty "Atom") (Ty "Atom")))
+    ,("or", for_all [] $ AtomTy ==> AtomTy ==> AtomTy)
+    ,("and", for_all [] $ AtomTy ==> AtomTy ==> AtomTy)
     ]
-    where math = Scheme [] $ TFun (Ty "Number") (TFun (Ty "Number") (Ty "Number"))
-          test = Scheme [] $ TFun (Ty "Number") (TFun (Ty "Number") (Ty "Atom"))
-          tyTest = Scheme["a"] $ TFun (TVar "a") (Ty "Atom")
+    where math = for_all [] $ NumberTy ==> NumberTy ==> NumberTy
+          test = for_all [] $ NumberTy ==> NumberTy ==> AtomTy
+          tyTest = for_all ["a"] $ "a" ==> AtomTy

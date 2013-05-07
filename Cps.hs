@@ -1,6 +1,14 @@
 module Cps (
     toCps,
     fileToCps,
+    printCps,
+    printCpsFile,
+    CFile,
+    CBinding(..),
+    Cps(..),
+    CAlt(..),
+    Inline(..),
+    Cont(..)
 ) where
 
 import General
@@ -52,7 +60,7 @@ andThenCont (CCC e) k1 = Call (ev "<letk>") e k1
 
 makeCall :: Inline -> Inline -> V (Cps, Inline)
 makeCall ll@(Inline l) rr@(Inline r)
-    | shouldInline l = return (CCC $ Inline $ EApp l r, Inline $ EApp l r)
+    | shouldInline (EApp l r) = return (CCC $ Inline $ EApp l r, Inline $ EApp l r)
     | otherwise = makeNICall ll rr
 makeCall l r = makeNICall l r
 
