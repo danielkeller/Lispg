@@ -225,7 +225,6 @@ ti env (ELetRec bs e2) = do
 
 ti env (ECase alts) = do
     tv <- newTyVar "c"
-    return (nullSubst, tv)
     (s, bool) <- expTy $ Type AtomTy []
     condSubst <- doConds alts s bool
     doAlts alts condSubst tv
