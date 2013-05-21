@@ -4,20 +4,24 @@ module Syntax (
 ) where
 
 import General
-import Text.ParserCombinators.Parsec
-import Control.Exception
+import Text.Parsec
+import Control.Exception hiding (try)
 
-symbol :: Parser Char
 symbol = oneOf "!#$%&|*+-/:<=>?@^_~"
 
-parseExpr = parseSexp <|> parseNumber <|> parseAtom <|> parseQuote
+wspace = skipMany (space <|> comment <?> "")
+    where comment = do
+              char ';'
+              manyTill anyChar newline
+              return ' '
+
+parseExpr = parseSexp <|> parseNumber <|> parseAtom <|> parseQuote <?> "expression"
 
 parseAtom = do
     first <- letter <|> symbol
     rest <- many (letter <|> digit <|> symbol)
     return $ Atom $ first:rest
 
-parseNumber :: Parser Value
 parseNumber = do
     text <- many1 digit
     return $ Number $ read text
@@ -33,17 +37,19 @@ parseSexp = do
 
 parseSexpBody = do
     first <- parseExpr
-    rest <- parseSexpRest 
+    rest <- parseSexpRest
     return $ first :. rest
 
 parseSexpRest = do
-    spaces
-    parseSexpBody <|> (char ')' >> return Nil)
+    wspace
+    parseSexpBody <|> do
+        char ')' <?> ")"
+        return Nil
 
 parseSexps = do
-    spaces
+    wspace
     first <- parseSexp
-    spaces
+    wspace
     rest <- parseSexps <|> (eof >> return Nil)
     return $ first :. rest
 
