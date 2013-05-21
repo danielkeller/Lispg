@@ -10,7 +10,7 @@ import General
 import Builtins
 import Type
 import Cps
---import CodeGen
+import CodeGen
 
 import System.Environment
 import Control.Exception
