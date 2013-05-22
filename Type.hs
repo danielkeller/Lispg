@@ -70,11 +70,12 @@ nullSubst = Subst Map.empty Map.empty
 composeSubst :: Subst -> Subst -> Subst
 composeSubst a@(Subst v1 e1) b@(Subst v2 e2) = Subst v3 e3
     where v3 = Map.map (\v -> lookupOr v v1 v) v2 `Map.union` v1
-          vars = Subst v3 Map.empty
-          e3 = Map.map (apply vars) $ Map.unionWith ovr e1 e2
+          e3 = Map.unionWith ovr e1 e2
           ovr l@(TExp Top _) _ = l
           ovr _ r@(TExp Top _) = r
-          ovr b1 b2 = error $ "composition conflict " ++ show b1 ++ " ~ " ++ show b2
+          ovr b1 b2
+              | b1 == b2 = b1
+              |otherwise = error $ "composition conflict " ++ show b1 ++ " ~ " ++ show b2
 composeSubsts :: [Subst] -> Subst
 composeSubsts = foldl composeSubst nullSubst
 
@@ -147,22 +148,29 @@ expTy (Type c ts) = do
     return (thisS `composeSubst` restS, outer)
 expTy (TV v) = return (nullSubst, v)
 
+--zipWith/foldl
+zfoldl f i (a:as) (b:bs) = zfoldl f (f i a b) as bs
+zfoldl _ i [] _ = i
+zfoldl _ i _ [] = i
+
 mgu :: Subst -> TVar -> TVar -> Subst
-mgu s@(Subst v e) a b = mgu' t u
+mgu s@(Subst v e) a b = mgu' t u `composeSubst` s
     where (c, d) = (lookupOr a v a, lookupOr b v b)
           (t, u) = (Map.lookup c e, Map.lookup d e)
-          mgu' Nothing Nothing = if c == d then nullSubst else Subst (Map.singleton c d) Map.empty
-          mgu' Nothing (Just ty) = varBind c ty
-          mgu' (Just ty) Nothing = varBind d ty
+          varsub = Subst (if c == d then Map.empty else Map.singleton c d) Map.empty
+          mgu' Nothing Nothing = varsub
+          mgu' Nothing (Just ty) = varBind c d ty
+          mgu' (Just ty) Nothing = varBind d c ty
           mgu' (Just (TExp x as)) (Just (TExp y bs))
               | x == Top || y == Top = nullSubst
-              | x == y = composeSubsts $ zipWith (mgu s) as bs
+              | x == y = zfoldl mgu (varsub `composeSubst` s) as bs
               | otherwise = Subst Map.empty $ Map.fromList [(c, TExp Top []), (d, TExp Top [])]
-         
-varBind :: TVar -> TExp -> Subst
-varBind u t
-    | u `Set.member` ftv t = Subst Map.empty $ Map.singleton u $ TExp Top []
-    | otherwise = Subst Map.empty $ Map.singleton u t
+
+--Bind u to v, which is also t
+varBind :: TVar -> TVar -> TExp -> Subst
+varBind u v t
+    | u `Set.member` ftv t = Subst Map.empty $ Map.singleton u $ TExp Top [] --this might not be right. check deep recur. types
+    | otherwise = Subst (Map.singleton u v) Map.empty
 
 tiLit :: Value -> TI (Subst, TVar)
 tiLit (Atom _) = expTy $ Type AtomTy []
@@ -193,13 +201,13 @@ ti env (EAbs n e) = do
     return (s2 `composeSubst` s1, a2)
 
 ti env (EApp f a) = do
-    ret <- newTyVar "a"
+    ret <- newTyVar "r"
     (s1, a1) <- ti env f
     (s2, a2) <- ti (apply s1 env) a
     (s3, a3) <- expTy $ Type Func [TV a2, TV ret]
     let sa = s3 `composeSubst` s2 `composeSubst` s1
         su = mgu sa a1 a3
-    return (su `composeSubst` sa, ret)
+    return (su, ret)
 
 ti env (ELet bs e2) = do
     error "not implemented"
@@ -225,19 +233,17 @@ ti env (ELetRec bs e2) = do
 
 ti env (ECase alts) = do
     tv <- newTyVar "c"
-    (s, bool) <- expTy $ Type AtomTy []
-    condSubst <- doConds alts s bool
+    condSubst <- doConds alts nullSubst
     doAlts alts condSubst tv
     where doAlts ((Alt _ e):alts) s a = do
               (s1, a1) <- ti (apply s env) e
               let s2 = mgu (s1 `composeSubst` s) a a1
-              doAlts alts (s2 `composeSubst` s1 `composeSubst` s) a
+              doAlts alts s2 a
           doAlts [] s a = return (s, a)
-          doConds ((Alt c _):alts) s bool = do
+          doConds ((Alt c _):alts) s = do
               (s1, a1) <- ti (apply s env) c
-              let s2 = mgu (s1 `composeSubst` s) a1 bool
-              doConds alts (s2 `composeSubst` s1 `composeSubst` s) bool
-          doConds [] s _ = return s
+              doConds alts (s1 `composeSubst` s)
+          doConds [] s = return s
 
 infer :: TypeEnv -> Expr -> Type
 infer env e = evalTI $ do
