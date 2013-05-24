@@ -1,9 +1,17 @@
 (define test
   (lambda (l)
    (cond
-     ((null? l) 0)
+     ((null? l) l)
      ((pair? (car l)) (+ (test (car l)) (test (cdr l))))
      (else (+ (car l) (test (cdr l)))))))
+
+(define studd
+  (lambda (f)
+    (f f)))
+
+(define foo
+  (lambda (a)
+    (Mergesort a)))
 
 (define merge
   (lambda (l r)
@@ -25,6 +33,22 @@
     (if (or (null? l) (null? (cdr l))) l
         (merge (Mergesort (evens #t l)) (Mergesort (evens #f l))))))
 
-(define foo
-  (lambda (a)
-    (+ (car a) 1)))
+(define stuff
+  (lambda (e)
+    (cond
+      ((null? e) '())
+      ((eq? (car (car e)) 'a) (stuff (cdr e)))
+      (else ((car (cdr (car e))) (cdr e))))))
+
+(define stuff0
+  (lambda (e f)
+    ((car f) (cdr e))))
+
+(define stuff1
+  (lambda (e)
+    ((car (cdr (car e))) (cdr e))))
+
+(define rmap
+  (lambda (l v)
+    (if (null? l) '()
+      (cons ((car l) v) (rmap (cdr l) v)))))

@@ -28,11 +28,8 @@ data Constr = AtomTy | NumberTy | Func | List | Top
 newtype TVar = TVar String
     deriving (Eq, Ord)
 
---type expansion
-data TExp = TExp Constr [TVar]
-    deriving Eq
-
-data Type = Type Constr [Type]
+data Type = TExp TVar Constr [Type]
+          | Type Constr [Type]
           | TV TVar
           deriving Eq
 
@@ -42,11 +39,9 @@ data Scheme = Scheme [TVar] Type --universal quantification
 instance Show TVar where
     showsPrec _ (TVar s) = showString s
 
-instance Show TExp where
-    showsPrec d (TExp c a) = showsPrec d $ Type c $ map TV a
-
 instance Show Type where
     showsPrec d (TV v) = showsPrec d v
+    showsPrec d (TExp v c ts) = showsPrec d v . showString " = " . showsPrec 6 (Type c ts)
     showsPrec d (Type Func [a,r]) = showParen (d>5) $
         showsPrec 6 a . showString " -> " . showsPrec 5 r
     showsPrec _ (Type List [c]) = showString "[" . showsPrec 0 c . showString "]"
@@ -54,30 +49,26 @@ instance Show Type where
     showsPrec _ (Type a _) = showsPrec 0 a
 
 instance Show Scheme where
+    showsPrec _ (Scheme [] t) = showsPrec 0 t
     showsPrec _ (Scheme free t) = showString ("∀ " ++ intercalate "," (map show free) ++ " . ") . showsPrec 0 t
 
-data Subst = Subst (Map.Map TVar TVar) (Map.Map TVar TExp)
+newtype Subst = Subst (Map.Map TVar Type)
 
 instance Show Subst where
-    showsPrec _ (Subst v e) = showListWith printS (Map.toAscList v)
-        . showString ", "
-        . showListWith printS (Map.toAscList e) --oh hey let-polymorphism is useful.
+    showsPrec _ (Subst s) = showListWith printS (Map.toAscList s)
         where printS (var, t) = showsPrec 0 var . showString " => " . showsPrec 0 t
 
 nullSubst :: Subst
-nullSubst = Subst Map.empty Map.empty
+nullSubst = Subst Map.empty
 
 composeSubst :: Subst -> Subst -> Subst
-composeSubst a@(Subst v1 e1) b@(Subst v2 e2) = Subst v3 e3
-    where v3 = Map.map (\v -> lookupOr v v1 v) v2 `Map.union` v1
-          e3 = Map.unionWith ovr e1 e2
-          ovr l@(TExp Top _) _ = l
-          ovr _ r@(TExp Top _) = r
-          ovr b1 b2
-              | b1 == b2 = b1
-              |otherwise = error $ "composition conflict " ++ show b1 ++ " ~ " ++ show b2
+composeSubst (Subst l) (Subst r) = Subst $ Map.map (apply $ Subst l) r `Map.union` l
+
 composeSubsts :: [Subst] -> Subst
 composeSubsts = foldl composeSubst nullSubst
+
+topSubst :: TVar -> Subst
+topSubst v = Subst (Map.singleton v (Type Top []))
 
 class Types a where
     ftv :: a -> Set.Set TVar
@@ -86,24 +77,18 @@ class Types a where
 instance Types Type where
     ftv (TV v) = Set.singleton v
     ftv (Type _ ts) = Set.unions $ map ftv ts
-    apply s t = if av == t && af == t then t else apply s af
-        where av = applyV s t
-              af = applyF s av
-              applyV (Subst vs _) (TV v) = TV $ lookupOr v vs v
-              applyV _ (Type c as) = Type c $ map (applyV s) as
-              applyF (Subst _ es) (TV v) = case Map.lookup v es of
-                  Just (TExp c as) -> Type c $ map TV as
-                  Nothing -> TV v
-              applyF _ (Type c as) = Type c $ map (applyF s) as
-
-instance Types TExp where
-    ftv (TExp _ vs) = Set.fromList vs
-    apply (Subst vs _) (TExp c as) = TExp c $ map (\a -> lookupOr a vs a) as
+    ftv (TExp v _ ts) = Set.insert v $ Set.unions $ map ftv ts --i think
+    apply (Subst s) (TV v) = case Map.lookup v s of
+                                 Just t -> t
+                                 Nothing -> TV v
+    apply (Subst s) t@(TExp v c ts) = case Map.lookup v s of
+                                          Just u -> u
+                                          Nothing -> TExp v c $ apply (Subst s) ts
+    apply s (Type c ts) = Type c $ map (apply s) ts
 
 instance Types Scheme where
     ftv (Scheme v t) = ftv t `Set.difference` Set.fromList v
-    apply (Subst vs es) (Scheme v t) = Scheme v $ apply (Subst (delAll vs v) (delAll es v)) t
-        where delAll m l = foldr Map.delete m l
+    apply (Subst s) (Scheme v t) = Scheme v $ apply (Subst $ foldr Map.delete s v) t
 
 instance Types a => Types [a] where
     ftv l = foldr Set.union Set.empty (map ftv l)
@@ -119,8 +104,21 @@ instance Types TypeEnv where
     apply s env = Map.map (apply s) env
 
 generalize :: TypeEnv -> Type -> Scheme
-generalize env t = Scheme vars t
-    where vars = Set.toList $ ftv t `Set.difference` ftv env
+generalize env t = Scheme vars t'
+    where vars = Set.toList $ ftv t' `Set.difference` ftv env
+          t' = strip t
+
+sanitize :: Type -> Scheme
+sanitize t = generalize Map.empty $ apply tidyS t'
+    where t' = strip t
+          tidyV = map (\c -> TV $ TVar [c]) "abcedfghijklmnopqrstuvwxyz"
+          vars = Set.toList $ ftv t'
+          tidyS = Subst $ Map.fromList $ zip vars tidyV
+
+strip :: Type -> Type
+strip (TExp _ c ts) = Type c (map strip ts)
+strip (Type c ts) = Type c (map strip ts)
+strip t = t
 
 type TI a = State Int a
 
@@ -133,81 +131,92 @@ newTyVar prefix = do
     put (cur + 1)
     return $ TVar $ prefix ++ show cur
 
-instantiate :: Scheme -> TI (Subst, TVar)
+instantiate :: Scheme -> TI Type
 instantiate (Scheme v t) = do
     nvars <- mapM (\_ -> newTyVar "i") v
-    let s = Subst (Map.fromList (zip v nvars)) Map.empty
-    expTy $ apply s t
-
-expTy :: Type -> TI (Subst, TVar)
-expTy (Type c ts) = do
-    outer <- newTyVar "e"
-    rest <- mapM expTy ts
-    let thisS = Subst Map.empty $ Map.singleton outer $ TExp c $ map snd rest
-    let restS = composeSubsts $ map fst rest
-    return (thisS `composeSubst` restS, outer)
-expTy (TV v) = return (nullSubst, v)
+    let s = Subst (Map.fromList (zip v $ map TV nvars))
+    return $ apply s t
 
 --zipWith/foldl
 zfoldl f i (a:as) (b:bs) = zfoldl f (f i a b) as bs
 zfoldl _ i [] _ = i
 zfoldl _ i _ [] = i
 
-mgu :: Subst -> TVar -> TVar -> Subst
-mgu s@(Subst v e) a b = mgu' t u `composeSubst` s
-    where (c, d) = (lookupOr a v a, lookupOr b v b)
-          (t, u) = (Map.lookup c e, Map.lookup d e)
-          varsub = Subst (if c == d then Map.empty else Map.singleton c d) Map.empty
-          mgu' Nothing Nothing = varsub
-          mgu' Nothing (Just ty) = varBind c d ty
-          mgu' (Just ty) Nothing = varBind d c ty
-          mgu' (Just (TExp x as)) (Just (TExp y bs))
-              | x == Top || y == Top = nullSubst
-              | x == y = zfoldl mgu (varsub `composeSubst` s) as bs
-              | otherwise = Subst Map.empty $ Map.fromList [(c, TExp Top []), (d, TExp Top [])]
+mgu :: Type -> Type -> Subst
+mgu (TExp v1 c1 ts1) r@(TExp v2 c2 ts2)
+    | c1 == c2 = mgus ts1 ts2
+    | otherwise = topSubst v1 `composeSubst` topSubst v2
+mgu l@(Type c1 ts1) r@(Type c2 ts2)
+    | c1 == Top || c2 == Top = nullSubst
+    | c1 == c2 = mgus ts1 ts2
+    | otherwise = throwEx $ "types do not unify " ++ show l ++ " ~ " ++ show r
+mgu l@(Type c1 ts1) r@(TExp v c2 ts2)
+    | c1 == c2 = mgus ts1 ts2
+    | otherwise = topSubst v
+mgu l@(TExp _ c ts) r@(Type _ _) = mgu r l
+mgu (TV v) t = varBind v t
+mgu t (TV v) = varBind v t
 
---Bind u to v, which is also t
-varBind :: TVar -> TVar -> TExp -> Subst
-varBind u v t
-    | u `Set.member` ftv t = Subst Map.empty $ Map.singleton u $ TExp Top [] --this might not be right. check deep recur. types
-    | otherwise = Subst (Map.singleton u v) Map.empty
+varBind :: TVar -> Type -> Subst
+varBind v t
+    | t == TV v = nullSubst
+    | v `Set.member` ftv t = topSubst v --this can be turned off to make infinite types
+    | otherwise = Subst $ Map.singleton v $ prepare t
+    where prepare (Type c ts) = TExp v c ts
+          prepare (TExp _ c ts) = TExp v c ts
+          prepare tv = tv
 
-tiLit :: Value -> TI (Subst, TVar)
-tiLit (Atom _) = expTy $ Type AtomTy []
-tiLit (Number _) = expTy $ Type NumberTy []
+mgus :: [Type] -> [Type] -> Subst
+mgus [] [] = nullSubst
+mgus (t:ts) (u:us) = mgu (apply s1 t) (apply s1 u) `composeSubst` s1
+    where s1 = mgus ts us
+
+tiLit :: Value -> TI Type
+tiLit (Atom _) = do
+    tv <- newTyVar "l"
+    return $ TExp tv AtomTy []
+tiLit (Number _) = do
+    tv <- newTyVar "l"
+    return $ TExp tv NumberTy []
 tiLit Nil = do
     conts <- newTyVar "l"
-    expTy $ Type List [TV conts]
+    return $ Type List [TV conts]
+tiLit (v :. rest) = do
+    restT <- tiLit rest
+    vT <- tiLit v
+    let s = mgu restT $ Type List [vT]
+    return $ apply s restT
 tiLit _ = error "unexpected run-time value in literal"
 
-ti :: TypeEnv -> Expr -> TI (Subst, TVar)
+ti :: TypeEnv -> Expr -> TI (Subst, Type)
 
-ti env (ELit (v :. rest)) = -- cheat a bit for simplicity
-    ti env (EApp (EApp (EVar "cons") (ELit v)) (ELit rest))
-ti _ (ELit l) = tiLit l
+ti _ (ELit l) = do
+    litT <- tiLit l
+    return (nullSubst, litT)
 
 ti env (EVar n) = --do special types here
     case Map.lookup n env of
         Nothing -> do
             t <- newTyVar n --"u" --throwEx $ "unbound variable " ++ n
+            return (nullSubst, TV t)
+        Just sigma -> do
+            t <- instantiate sigma
             return (nullSubst, t)
-        Just sigma -> instantiate sigma
 
 ti env (EAbs n e) = do
     tv <- newTyVar "p"
     let env' = Map.insert n (Scheme [] $ TV tv) env --hiding
-    (s1, a1) <- ti env' e
-    (s2, a2) <- expTy $ Type Func [TV tv, TV a1]
-    return (s2 `composeSubst` s1, a2)
+    (s1, t1) <- ti env' e
+    fun <- newTyVar "f"
+    return (s1, Type Func [apply s1 (TV tv), t1])
 
 ti env (EApp f a) = do
     ret <- newTyVar "r"
-    (s1, a1) <- ti env f
-    (s2, a2) <- ti (apply s1 env) a
-    (s3, a3) <- expTy $ Type Func [TV a2, TV ret]
-    let sa = s3 `composeSubst` s2 `composeSubst` s1
-        su = mgu sa a1 a3
-    return (su, ret)
+    (s1, t1) <- ti env f
+    (s2, t2) <- ti (apply s1 env) a
+    let tfun = Type Func [t2, TV ret]
+        s3 = mgu (apply s2 t1) tfun
+    return (s3 `composeSubst` s2 `composeSubst` s1, apply s3 (TV ret))
 
 ti env (ELet bs e2) = do
     error "not implemented"
@@ -232,24 +241,24 @@ ti env (ELetRec bs e2) = do
           -}
 
 ti env (ECase alts) = do
-    tv <- newTyVar "c"
+    ty <- newTyVar "c" >>= return . TV
     condSubst <- doConds alts nullSubst
-    doAlts alts condSubst tv
-    where doAlts ((Alt _ e):alts) s a = do
-              (s1, a1) <- ti (apply s env) e
-              let s2 = mgu (s1 `composeSubst` s) a a1
-              doAlts alts s2 a
-          doAlts [] s a = return (s, a)
+    doAlts alts condSubst ty
+    where doAlts ((Alt _ e):alts) s t = do
+              (s1, t1) <- ti (apply s env) e
+              let s2 = mgu t1 (apply (traceV "s1" s1) t)
+              doAlts alts (s2 `composeSubst` s1 `composeSubst` s) (apply s2 t1)
+          doAlts [] s t = return (s, t)
           doConds ((Alt c _):alts) s = do
-              (s1, a1) <- ti (apply s env) c
+              (s1, _) <- ti (apply s env) c
               doConds alts (s1 `composeSubst` s)
           doConds [] s = return s
 
 infer :: TypeEnv -> Expr -> Type
 infer env e = evalTI $ do
-    (s, a) <- ti env e
-    return (apply s $ TV a)
+    (s, t) <- ti env e
+    return (apply s t)
 
 inferT :: TypeEnv -> Expr -> IO ()
-inferT env e = putStrLn $ show s ++ "\n" ++ show a ++ "\n" ++ show (apply s $ TV a) ++ "\n"
-    where (s, a) = evalTI $ ti env e
+inferT env e = putStrLn $ show s ++ "\n" ++ show t ++ "\n" ++ show (sanitize t) ++ "\n"
+    where (s, t) = evalTI $ ti env e
