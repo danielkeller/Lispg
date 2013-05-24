@@ -1,14 +1,6 @@
 module Cps (
     toCps,
     fileToCps,
-    printCps,
-    printCpsFile,
-    CFile,
-    CBinding(..),
-    Cps(..),
-    CAlt(..),
-    Inline(..),
-    Cont(..)
 ) where
 
 import General

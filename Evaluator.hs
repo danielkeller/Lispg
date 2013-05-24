@@ -19,7 +19,7 @@ eval (EApp fun arg) env =
     where doFun (Closure (EAbs p b) cenv) arg = 
               eval b (Map.insert p arg cenv)
           doFun (Builtin f) arg = f arg
-          doFun bad _ = throwEx $ "call on non-function " ++ printValue bad
+          doFun bad _ = throwEx $ "call on non-function " ++ show bad
 
 eval (ELet bs expr) env = eval expr $ Map.union env $ Map.fromList $ map bPair bs
     where bPair (Binding v e) = (v, eval e env)

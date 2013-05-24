@@ -24,7 +24,7 @@ main = do
         [] -> evExpr []
         fName:_ -> do
             code <- parseFile fName >>= return.deSugar
-            --putStrLn $ printFile code
+            --mapM print code
             flip mapM_ code (\ (Binding v e) ->
                 inferT builtinTy e)
             --putStrLn $ intercalate "\n\n" $ map show $ fileToCps code
@@ -40,7 +40,7 @@ evExpr code = do
     where doRep = do
               text <- getLine
               let replCode = dsExpr $ parseInput text
-              putStrLn $ printExpr replCode
+              print replCode
               inferT builtinTy replCode
               --putStrLn $ printCps $ toCps replCode 
               --print $ doInfer code replCode

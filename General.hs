@@ -24,12 +24,7 @@ module General (
     Cont,
     InterpreterException(..),
     throwEx,
-    printValue,
-    printExpr,
-    printFile,
     traceV,
-    printCps,
-    printCpsFile,
     Code(..),
 ) where
 
@@ -37,7 +32,7 @@ import qualified Data.Map as Map
 import qualified Data.Set as Set
 import Control.Exception
 import Data.Typeable
-import Data.List(intercalate)
+import Data.List(intercalate, intersperse)
 
 import Debug.Trace
 traceV str v = trace (str ++ " " ++ show v) v
@@ -51,25 +46,20 @@ type Env = Map.Map String Value
 
 data Value = Atom String | Number Integer | Value :. Value | Nil --compile-time
              | Closure Expr Env | Builtin (Value -> Value) --run-time
-    deriving Show
-
-instance Show (Value -> Value) where
-    --this will probably crash if you try to use it
 
 infixr 5 :.
 
 --Expressions are parameterized over the type of the binder. This allows us to switch from
 --strings to closure offsets in the code generator while maintaining the same code structure
 class Binder a where
-    printBdr :: a -> String
+    printBdr :: a -> ShowS
     contVar :: a
 
 instance Binder String where
-    printBdr = id
+    printBdr = showString
     contVar = "k"
 
 data GBinding a = Binding a (GExpr a)
-    deriving Show
 data GExpr a = ELit Value
           | EVar a
           | EAbs a (GExpr a)
@@ -77,9 +67,7 @@ data GExpr a = ELit Value
           | ELet [GBinding a] (GExpr a)
           | ELetRec [GBinding a] (GExpr a)
           | ECase [GAlt a]
-    deriving Show
 data GAlt a = Alt (GExpr a) (GExpr a)
-    deriving Show
 
 type File = [Binding]
 type Binding = GBinding String
@@ -87,15 +75,10 @@ type Expr = GExpr String
 type Alt = GAlt String
 
 data GCBinding a = CBinding a Inline
-    deriving Show
 data GCps a = Call (GInline a) (GInline a) (GCont a) | CCC (GInline a) | Case [GCAlt a]
-    deriving Show
 data GCAlt a = CAlt (GInline a) (GCps a)
-    deriving Show
 data GInline a = Inline (GExpr a) | Fun a (GCps a)
-    deriving Show
 data GCont a = Cont a (GCps a) -- | CC
-    deriving Show
 
 type CFile = [CBinding]
 type CBinding = GCBinding String
@@ -141,37 +124,32 @@ instance Code GInline where
 instance Code GCont where
     freeIn (Cont p e) = Set.delete p $ freeIn e
 
-printValue :: Value -> String
-printValue l@(_:._) = "(" ++ plHelp l ++ ")"
-printValue (Closure _ _) = "#<closure>"
-printValue (Builtin _) = "#<closure>"
-printValue l = plHelp l
-plHelp Nil = "()"
-plHelp (Atom s) = s
-plHelp (Number n) = show n
-plHelp (l@(_:._) :. Nil) = "(" ++ plHelp l ++ ")"
-plHelp (l@(_:._) :. r@(_ :. _)) = "(" ++ plHelp l ++ ") " ++ plHelp r
-plHelp (l@(_:._) :. r) = "(" ++ plHelp l ++ ") . " ++ plHelp r
-plHelp (l :. Nil) = plHelp l
-plHelp (l :. r@(_ :. _)) = plHelp l ++ " " ++ plHelp r
-plHelp (l :. r) = plHelp l ++ " . " ++ plHelp r
+instance Show Value where
+    show v = showsPrec 1 v "" --include outer parens
+    showsPrec d (l :. r) = showParen (d>0) $ showsPrec 1 l . space . showsPrec 0 r
+        where space = if r == Nil then showString "" else showString " "
+    showsPrec d Nil = if d>0 then showString "()" else showString ""
+    showsPrec d (Atom s) = showString s
+    showsPrec d (Number n) = showsPrec 0 n
+    showsPrec _ _ = showString "#<closure>"
 
-printExpr :: Binder a => GExpr a -> String
-printExpr (ELit l) = '\'' : printValue l
-printExpr (EVar s) = printBdr s
-printExpr (EAbs a e) = "λ" ++ printBdr a ++ "." ++ printExpr e
-printExpr (ELet b e) = "let " ++ intercalate "\n    " (printBindings b) ++ "\n    in " ++ printExpr e
-printExpr (ELetRec b e) = printExpr $ ELet b e
-printExpr (EApp l r@(EApp _ _)) = printExpr l ++ " (" ++ printExpr r ++ ")"
-printExpr (EApp l r@(EAbs _ _)) = printExpr l ++ " (" ++ printExpr r ++ ")"
-printExpr (EApp l r) = printExpr l ++ " " ++ printExpr r
-printExpr (ECase alts) = "case\n" ++ intercalate "\n" (map printCase alts)
-    where printCase (Alt c e) = "    | " ++ printExpr c ++ " -> " ++ printExpr e
+instance Binder a => Show (GExpr a) where
+    showsPrec _ (ELit l) = showString "'" . showsPrec 1 l
+    showsPrec _ (EVar b) = printBdr b
+    showsPrec d (EAbs b e) = showParen (d>0) $ showString "λ" . printBdr b . showString "." . showsPrec 0 e
+    showsPrec d (EApp l r) = showParen (d>1) $ showsPrec 1 l . showString " " . showsPrec 2 r
+    showsPrec d (ELet bs e) = showString "let " .
+                              foldr1 (.) (intersperse (showString "\n    ") $ map (showsPrec 0) bs) . 
+                              showString "\n    in " . showsPrec 0 e
+    showsPrec _ (ELetRec b e) = showsPrec 0 (ELet b e)
+    showsPrec _ (ECase alts) = showString "case" . foldr1 (.) (map showAlt alts)
+        where showAlt (Alt c e) = showString "\n    | " . showsPrec 0 c . showString " -> " . showsPrec 0 e
 
-printBindings (Binding v e : bs) = (printBdr v ++ " = " ++ printExpr e) : printBindings bs
-printBindings [] = []
+instance Binder a => Show (GBinding a) where
+    showsPrec _ (Binding b e) = printBdr b . showString " = " . showsPrec 0 e
 
-printFile f = intercalate "\n\n" (printBindings f) ++ "\n\n"
+instance Binder a => Show (GCps a) where
+    showsPrec d e = showsPrec d $ toExpr e
 
 toExpr :: Binder a => GCps a -> GExpr a
 toExpr (Call f p (Cont s c)) = EApp (EApp (fromInline f) (fromInline p)) $ EAbs s (toExpr c)
@@ -182,8 +160,3 @@ toExpr (Case a) = ECase (map teAlt a)
 fromInline :: Binder a => GInline a -> GExpr a
 fromInline (Inline e) = e
 fromInline (Fun p b) = EAbs p (EAbs contVar (toExpr b))
-
-printCps :: Binder a => GCps a -> String
-printCps = printExpr . toExpr
-printCpsFile = concat . map printB
-    where printB (CBinding s e) = s ++ " = " ++ printExpr (fromInline e) ++ "\n"

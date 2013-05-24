@@ -23,13 +23,12 @@ data LLBinder = ContB | COffs Int | ArgB | ExternB String
     deriving (Eq, Ord)
 
 instance Binder LLBinder where
-    printBdr (COffs n) = "#" ++ show n
-    printBdr ArgB = "arg"
-    printBdr ContB = "k"
-    printBdr (ExternB n) = n
-    printBdr (ClosB b) = "(" ++ conts ++ ")"
-        where conts = intercalate ", " $ map printMap $ Map.toList b
-              printMap (l, r) = printBdr l ++ " -> " ++ printBdr r
+    printBdr (COffs n) = showString "#" . showsPrec 0 n
+    printBdr ArgB = showString "arg"
+    printBdr ContB = showString "k"
+    printBdr (ExternB n) = showString n
+    printBdr (ClosB b) = showParen True $ foldr1 (.) $ map showC (Map.toList b)
+        where showC (l, r) = printBdr l . showString " -> " . printBdr r
     contVar = ContB
 
 closureBind :: [String] -> GInline String -> GInline LLBinder
@@ -52,7 +51,7 @@ closureBind globals ex = cbInline ex $ Map.empty
                   Nothing -> ExternB v
           cbExpr (EApp f a) m = EApp (cbExpr f m) (cbExpr a m)
           cbExpr (ELit l) _ = ELit l
-          --cbExpr bad _ = error $ "unexpected " ++ printExpr bad ++ " in cps code"
+          --cbExpr bad _ = error $ "unexpected " ++ show bad ++ " in cps code"
 
 type BlockList = Map.Map String BasicBlock
 data GlobalInfo = GlobalInfo {globals :: [String],
@@ -65,7 +64,7 @@ codeGen :: String -> CFile -> IO ()
 codeGen fName file = do
     let topLevels = Map.keys builtins ++ map (\(CBinding b e) -> b) file
     putStrLn $ intercalate "\n\n" $ flip map file $ \(CBinding b e) ->
-        b ++ " = " ++ (printCps . CCC . closureBind topLevels) e
+        b ++ " = " ++ (show . CCC . closureBind topLevels) e
     mod <- newModule
     defineModule mod $ do
         let f_main argc argv = do
